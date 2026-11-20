@@ -87,10 +87,20 @@ class ServiceManager:
         self.checks = await run_checks(self.check_specs)
         self.stats = await asyncio.to_thread(host_stats, self.cfg.get("disk_path", "~"))
 
-    def _fetch_peer(self, url: str) -> dict:
+    def peer_token(self, name: str) -> str:
+        """The peer's own token (from its token_file); falls back to ours (shared-token setups)."""
+        tf = self.peers.get(name, {}).get("token_file")
+        if tf:
+            try:
+                return Path(tf).expanduser().read_text().strip()
+            except OSError:
+                pass
+        return self._token or ""
+
+    def _fetch_peer(self, name: str, url: str) -> dict:
         import urllib.request
         req = urllib.request.Request(url.rstrip("/") + "/api/info",
-                                     headers={"Authorization": f"Bearer {self._token or ''}"})
+                                     headers={"Authorization": f"Bearer {self.peer_token(name)}"})
         with urllib.request.urlopen(req, timeout=1.5) as r:
             return json.loads(r.read())
 
@@ -98,7 +108,7 @@ class ServiceManager:
         while True:
             for name, p in self.peers.items():
                 try:
-                    info = await asyncio.to_thread(self._fetch_peer, p["url"])
+                    info = await asyncio.to_thread(self._fetch_peer, name, p["url"])
                     p.update(online=True, detail=f"{info.get('label') or info.get('host')} v{info.get('version')}")
                 except Exception as e:  # noqa: BLE001
                     code = getattr(e, "code", None)

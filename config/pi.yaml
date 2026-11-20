@@ -12,7 +12,8 @@ auth: true
 peers:
   - name: orin
     label: Orin
-    url: http://192.168.123.116:8080
+    url: http://192.168.123.116:8090
+    token_file: ~/.config/yor_hub/peers/orin.token   # the Orin hub's own token; never sent to browsers
 
 env_setups:
   yor-nero: "source ~/miniforge3/etc/profile.d/conda.sh && conda activate yor-nero"

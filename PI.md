@@ -89,6 +89,14 @@ Extra schema keys beyond the table below: `conflicts` (blocked while these are
 ok/running, e.g. CAN setup is blocked while yor.py runs because setup.sh bounces
 the arm buses), `stop_timeout`, `description`, `env` (key into `env_setups`).
 
+## Phase 1.5: unified front hub (next, Pi)
+
+- [ ] multi-host proxy: `/api/hosts`, `/api/state/all`, `/api/hosts/{host}/*`, ws term proxy
+- [ ] UI: one section per host, Orin cards and terminals through the proxy, offline banner
+- [ ] cross-host `requires` (`orin:...`)
+- [ ] service `params` (select from `options_from: cycles`), remembered per service
+- [ ] cycle editor UI (add / rename / delete cycles; add / remove / reorder / edit subtasks)
+
 ## Later phases
 
 2. Diagnostics: passive AF_CAN listeners (frame rate per bus, Nero 0x251–0x257
@@ -100,14 +108,14 @@ the arm buses), `stop_timeout`, `description`, `env` (key into `env_setups`).
    on the Orin, as one click. Same for "policy deploy".
 5. Optional: systemd-networkd `[CAN] BitRate=1M` so adapters configure on hotplug.
 
-## Shared API contract (both hubs implement this; v0, may still change)
+## Shared API contract (v0.2, 2026-11-20; every hub implements v0, the front hub adds the multi-host part)
 
 All JSON. Auth: cookie `yor_hub_token` or header `Authorization: Bearer <token>`.
 
 ```
 GET  /api/info                -> {host, label, version, peers:[{name,url}]}
 GET  /api/state               -> {host, time, services:[Service], checks:{name:Check}, stats:Stats}
-POST /api/services/{id}/start   body {args?: str, force?: bool}   -> Service   (409 if requires unmet and not force)
+POST /api/services/{id}/start   body {args?: str, params?: {name: str|null}, force?: bool} -> Service (409 if requires unmet and not force)
 POST /api/services/{id}/stop    -> Service
 POST /api/services/{id}/restart body {args?: str} -> Service
 POST /api/services/{id}/clear   -> Service      (removes the dead window)
@@ -123,7 +131,30 @@ Service = {id, label, group, kind: "daemon"|"oneshot"|"agent",
            window: str|null}
 Check   = {ok: bool, level: "ok"|"warn"|"error", detail: str, data?: {}}
 Stats   = {cpu_temp_c, load: [1,5,15], mem_used_pct, disk_free_gb, extra: {}}
+Service += {params: [{name, label, type: "select", options: [str], value: str|null}]}   (v0.2)
 ```
+
+Multi-host (v0.2, implemented by the **front** hub only, i.e. the Pi):
+
+```
+GET  /api/hosts                     -> [{name, label, url|null, online, detail, self: bool}]
+GET  /api/state/all                 -> {hosts: {name: State | {online:false, detail}}}  (peer state cached ≤1 s)
+ANY  /api/hosts/{host}/{rest...}    -> proxied to that host's /api/{rest} with its token (host=self: local)
+WS   /ws/hosts/{host}/term/{window} -> proxied to that host's /ws/term/{window}
+```
+
+Cycles (v0.2, a node with `cycles: {file}` in its config, i.e. the Orin; see ORIN.md):
+
+```
+GET    /api/cycles          -> {file, mtime, cycles: {name: [subtask]}}
+PUT    /api/cycles/{name}   body {subtasks, rename_to?} -> {cycles}
+DELETE /api/cycles/{name}   -> {cycles}
+```
+
+Cross-host `requires`/`conflicts` refs look like `orin:collect_preview` or
+`orin:service:collection`. The front hub evaluates them; a node ignores refs to other
+hosts. The port is per-host (`host.port`): Pi 8080, Orin 8090 (collect.py's preview
+owns the Orin's 8080).
 
 State meaning: `running` = process alive but its ready check isn't passing yet
 (or it has none). `ready` = ready check passing. `exited` = exit code 0
@@ -136,15 +167,15 @@ Host-specific stats go in `Stats.extra`: Pi `throttled`; Orin `gpu_util`,
 
 - Pi 192.168.123.55 (Wi-Fi), Orin **192.168.123.116** (it was .117 for a while;
   all references in ~/YOR were updated 2026-11-20).
-- Hub port **8080** on both. Already in use, so avoid: Pi 5557 (yor RPC), 5558 (episodes),
-  8443 (VR); Orin 5559 (cycle announce), 8444 (video), 6000 (ZED).
+- Hub port: Pi **8080** (front, serves the UI), Orin **8090** (node). Already in use, so avoid:
+  Pi 5557 (yor RPC), 5558 (episodes), 8443 (VR); Orin 8080 (collect.py preview), 5551,
+  5559 (cycle announce), 8444 (video), 5580/5583 (pi-atlas observer).
 - The Pi can't ssh to the Orin. Hubs talk over HTTP, so none is needed.
 
 ## Requests to Orin
 
-- Run the same `yor_hub` package with `config/orin.yaml` on port 8080, under
-  the same token (copy `~/.config/yor_hub/token` from the Pi once the Pi
-  generates it).
+- See "NEXT: unified hub" at the top of ORIN.md (2026-11-20): token handoff to
+  `~/.config/yor_hub/peers/orin.token`, systemd install, Orin stats, cycles API.
 - Keep to the API contract above. If you need a change, propose it under
   "Requests to Pi" in ORIN.md, not by silently changing the contract.
 
@@ -154,3 +185,6 @@ Host-specific stats go in `Stats.extra`: Pi `throttled`; Orin `gpu_util`,
 - 2026-11-20: phase 1 done on `pi`, merged to `main`. Installed and enabled on the Pi;
   CAN preflight ran at service start (both arms detected). Orin tile shows
   "unreachable" until the Orin hub runs on :8080.
+- 2026-11-20: merged `orin` (orin.yaml, automount-safe `mount` check) into main. Orin
+  hub runs on :8090. Plan changed to one front hub: the Pi serves the UI and proxies
+  the Orin. Proposal and cycles request are in ORIN.md.

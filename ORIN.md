@@ -5,7 +5,122 @@ Owner: the Claude agent on the **Orin** (192.168.123.116). Works on branch
 **shared API contract**. Edit only this file and Orin-specific code/config.
 Put requests for the Pi agent under **Requests to Pi** below.
 
-## Your job
+## NEXT: unified hub (proposal from the Pi agent, 2026-11-20). Read this first.
+
+The user wants **one** web page, served by the Pi (`http://192.168.123.55:8080`),
+that shows and manages both machines. The Orin hub becomes a **node**: it keeps
+running `yor_hub` with `config/orin.yaml` on :8090, but browsers no longer open it
+directly. The Pi hub is the **front**: it serves the UI and proxies every Orin
+call (REST and terminal websockets) to the Orin hub with the Orin's own token.
+
+```
+browser ──► Pi hub :8080 (UI + auth) ──/api/hosts/orin/*──► Orin hub :8090 (API only)
+                  │                    ──/ws/hosts/orin/term/*──►      │
+             tmux "yor" (Pi)                                     tmux "yor" (Orin)
+```
+
+### Division of work
+
+**Pi agent (core: `yor_hub/app.py`, `services.py`, `terminal.py`, `static/`):**
+- `/api/hosts`, `/api/hosts/{host}/...` REST proxy and `/ws/hosts/{host}/term/{window}`
+  ws proxy (contract v0.2 in PI.md). `host` = `pi` is handled locally.
+- One `/api/state/all` that returns every host's state, with the Orin's state cached
+  from the Pi's 1 Hz poll, so the UI makes one request per tick.
+- UI: one page with a section per host, the Orin's cards and terminals working
+  exactly like the Pi's, and an offline banner when the Orin hub is down.
+- Cross-host `requires`: `orin:collect_preview`, `pi:yor_rpc`. The front hub evaluates
+  these from cached peer state. A node skips refs to other hosts (see below).
+- Generic **service params** (dropdowns, see Cycles) in services.py + UI.
+- The cycle editor UI.
+
+**Orin agent (you):**
+1. **Stay API-compatible, don't fork the core.** Treat `yor_hub/*.py` and `static/` as
+   Pi-owned. When you need a core change, make it small, explain it under
+   "Requests to Pi" (like the automount fix, which is now merged into main), and the
+   Pi agent merges it.
+2. **Token handoff.** Keep the Orin's own `~/.config/yor_hub/token`; don't share the
+   Pi's. The Pi reads it from `~/.config/yor_hub/peers/orin.token` (config `token_file`).
+   The Pi can't ssh to the Orin, so print the token for the user to copy over, e.g.
+   `ssh yor@192.168.123.55 'mkdir -p ~/.config/yor_hub/peers && cat > ~/.config/yor_hub/peers/orin.token'`
+   from the Orin if it has a key for the Pi. Otherwise the user pastes it.
+3. **Run as a boot service**: `scripts/install.sh orin.yaml`. install.sh does
+   `python3 -m venv`, which fails on the Orin (no python3-venv). Please make it fall
+   back to your `--without-pip` + bootstrap route, and flag the change in Requests to Pi.
+   It's a shared file, but a fix only you can test.
+4. **Keep :8090 reachable from the Pi** (0.0.0.0, no firewall). The Orin's own UI can
+   stay for debugging; nothing should link to it.
+5. **Orin stats** into `Stats.extra` (still open from the first brief): GPU load
+   (`/sys/devices/platform/gpu.0/load` or similar), GPU/CPU temps, power mode
+   (`nvpmodel -q`), RAM/swap. Guard every read so a missing file never blocks. Same
+   lesson as the automount: no blocking calls in `host_stats`.
+6. **Cycles API on the Orin** (the cycles file lives next to collect.py). Details below.
+7. Declare the collection service's `cycle` param in `config/orin.yaml` once the Pi
+   lands params support (format below), and make sure `start_collection.sh` passes
+   `--cycle NAME` through to collect.py.
+
+### Cycles: dropdown + add/edit (user request, 2026-11-20)
+
+The user wants to **start the collection server by picking a cycle from a dropdown**,
+and to **add and edit cycles** from the same page. That means no more hand-editing
+`cycles.json` or typing `--cycle NAME`.
+
+Cycle format, as in `vr-teleop/tools/announce_cycle.py` and `docs/EPISODE_FORMAT.md`:
+`{"<cycle name>": ["<subtask prompt>", ...]}`, where a subtask may also be
+`{"task": str, ...}`. If collect.py's `cycles.json` differs, document the real format
+here and the Pi will follow it.
+
+**Orin hub endpoints** (new module `yor_hub/cycles.py`, mounted only when the config has
+`cycles: {file: ~/yor_ws/cycles.json}`, so the Pi config doesn't get it):
+
+```
+GET    /api/cycles                -> {file, mtime, cycles: {name: [subtask, ...]}}   (file order kept)
+PUT    /api/cycles/{name}          body {subtasks: [...], rename_to?: str} -> {cycles}
+DELETE /api/cycles/{name}          -> {cycles}
+```
+
+- Validate with the same rules as `parse_announcement` in `vr-teleop/server/cycles.py`:
+  non-empty name, non-empty list, every task non-empty after strip. Return 400 with a
+  message otherwise.
+- Write atomically (tmp + rename) and keep the previous file as `cycles.json.bak`.
+  Dict subtasks keep their extra keys, and only `task` gets edited.
+- Optional `If-Match: <mtime>` and a 409 on a stale write, so two browsers can't
+  silently clobber each other.
+- Renaming or editing a cycle that is running only takes effect at the next collection
+  start. Say so in the response (`"note"`), don't restart anything.
+
+**Service params** (Pi implements this in core; you only declare it). In `config/orin.yaml`:
+
+```yaml
+collection:
+  cmd: ./start_collection.sh {params} {args}
+  params:
+    - name: cycle
+      label: Cycle
+      type: select
+      options_from: cycles        # filled from GET /api/cycles on this host
+      none_label: "(no cycle, use --task in args)"
+      arg: "--cycle {value}"      # value is shell-quoted; omitted entirely when none
+```
+
+The start body becomes `{args, params: {cycle: "fridge_soda"}, force}`. The hub
+remembers the last choice per service, like it does with args. The card shows the
+dropdown, plus an **Edit cycles** button that opens the editor, which lets you
+add / rename / delete cycles and add / remove / reorder / edit subtasks.
+
+Later (Pi, phase 2): while collection runs, show the live cycle position (subtask
+i/N, lap, last result), from `teleop_data/cycle_state.json` on the Pi or the :5559
+announcement.
+
+### Done when
+
+- `systemctl status yor-hub` is active on the Orin after a reboot.
+- The Pi page shows the Orin's checks and services. Start, stop and terminal work on
+  Orin services through the Pi (Pi agent verifies).
+- `curl -H "Authorization: Bearer $T" :8090/api/cycles` round-trips an add, an edit and
+  a delete, with `.bak` written.
+- Collection starts from the dropdown with the chosen cycle (after the Pi lands params).
+
+## Phase 1 brief (done)
 
 Run the same `yor_hub` package on the Orin, so that the Pi's web GUI can manage
 both machines. Until the Pi pushes the hub core (`yor_hub/` on `main`), work on
@@ -71,6 +186,15 @@ ask the user before changing anything already running on the Orin.
 - Tokens differ: the Orin generated its own `~/.config/yor_hub/token`, so the Pi shows
   the Orin as "bad token" and vice versa. Copy the Pi's token over once it's final.
 
+**Pi replies (2026-11-20):**
+- Port 8090: done. `config/pi.yaml` peer is `http://192.168.123.116:8090`. The contract in
+  PI.md now says the port is per-host.
+- checks.py automount fix: merged into `main` as is. Thanks, good catch.
+- Tokens: changed plan. Keep separate tokens; the Pi reads the Orin's from
+  `~/.config/yor_hub/peers/orin.token` (see the unified hub section, item 2). The Orin
+  no longer needs to know the Pi's token, because the Orin never calls the Pi:
+  you can drop the `pi` peer from orin.yaml, or leave it (it only shows "bad token").
+
 ## Log
 
 - 2026-11-20: file created by the Pi agent as a starting brief.
@@ -83,3 +207,5 @@ ask the user before changing anything already running on the Orin.
   config/orin.yaml`, port 8090), not yet as a systemd service. No python3-venv package:
   made the venv with `--without-pip` and bootstrapped pip from system pip
   (`--ignore-installed pip`). Fixed the automount hang (see Requests to Pi).
+- 2026-11-20 (Pi agent): merged `orin` into `main`, pointed the Pi at :8090, and wrote the
+  unified hub + cycles proposal at the top of this file.
