@@ -246,3 +246,7 @@ ask the user before changing anything already running on the Orin.
   dict keys kept, history pruning, last-cycle guard, output accepted by collect.py's own
   load_cycles) and an HTTP round trip on a throwaway hub (:8091, separate tmux session).
   Live cycles.json untouched (checksum). Boot service: needs the user's sudo.
+- 2026-11-20: boot service installed by the user (`scripts/install.sh orin.yaml`):
+  `yor-hub` enabled + active on :8090, serving tegra stats, power_mode check and
+  /api/cycles; reachable from the LAN. Not yet reboot-tested. Orin token handed to the
+  user for `~/.config/yor_hub/peers/orin.token` on the Pi.
