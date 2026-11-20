@@ -34,6 +34,8 @@ class ServiceSpec:
     autostart: bool = False
     stop_timeout: float = 10.0
     description: str = ""
+    # [{name, label, type: select, options: [..] | options_from: <source>, none_label, arg: "--x {value}"}]
+    params: list[dict] = field(default_factory=list)
 
 
 class HubError(Exception):
@@ -63,7 +65,9 @@ class ServiceManager:
         self.panes = {}
         self._lock = asyncio.Lock()
         self.peers: dict[str, dict] = {p["name"]: {**p, "online": None} for p in cfg.get("peers", [])}
+        self.peer_states: dict[str, dict | None] = {n: None for n in self.peers}
         self._token: str | None = None
+        self.option_sources: dict = {}   # name -> callable returning [str] (e.g. "cycles")
 
     # ---------- persistence ----------
     def _load_persist(self) -> dict:
@@ -76,6 +80,43 @@ class ServiceManager:
         tmp = self._state_file.with_suffix(".tmp")
         tmp.write_text(json.dumps(self._persist, indent=2))
         tmp.replace(self._state_file)
+
+    def _param_options(self, p: dict) -> list[str]:
+        if "options" in p:
+            return [str(o) for o in p["options"]]
+        src = self.option_sources.get(p.get("options_from", ""))
+        if not src:
+            return []
+        try:
+            return list(src())
+        except Exception:  # noqa: BLE001
+            return []
+
+    def params_for(self, sid: str) -> dict:
+        return self._persist.setdefault("params", {}).get(sid, {})
+
+    def params_json(self, spec: ServiceSpec) -> list[dict]:
+        vals = self.params_for(spec.id)
+        out = []
+        for p in spec.params:
+            opts = self._param_options(p)
+            v = vals.get(p["name"])
+            out.append({"name": p["name"], "label": p.get("label", p["name"]), "type": p.get("type", "select"),
+                        "options": opts, "options_from": p.get("options_from"),
+                        "none_label": p.get("none_label", "(none)"),
+                        "value": v if v in opts else None})
+        return out
+
+    def _params_str(self, spec: ServiceSpec, values: dict) -> str:
+        parts = []
+        for p in spec.params:
+            v = values.get(p["name"])
+            if v is None or v == "":
+                continue
+            if v not in self._param_options(p):
+                raise HubError(400, f"{p['name']}: {v!r} is not one of the options")
+            parts.append(p.get("arg", "{value}").replace("{value}", shlex.quote(str(v))))
+        return " ".join(parts)
 
     def args_for(self, sid: str) -> str:
         spec = self.specs.get(sid)
@@ -97,23 +138,28 @@ class ServiceManager:
                 pass
         return self._token or ""
 
-    def _fetch_peer(self, name: str, url: str) -> dict:
+    def _fetch_peer(self, name: str, url: str, path: str = "/api/state") -> dict:
         import urllib.request
-        req = urllib.request.Request(url.rstrip("/") + "/api/info",
+        req = urllib.request.Request(url.rstrip("/") + path,
                                      headers={"Authorization": f"Bearer {self.peer_token(name)}"})
-        with urllib.request.urlopen(req, timeout=1.5) as r:
+        with urllib.request.urlopen(req, timeout=2.0) as r:
             return json.loads(r.read())
 
-    async def poll_peers_forever(self, period: float = 5.0) -> None:
+    async def _poll_peer(self, name: str, p: dict) -> None:
+        try:
+            st = await asyncio.to_thread(self._fetch_peer, name, p["url"])
+            self.peer_states[name] = st
+            p.update(online=True, detail=st.get("label") or name, seen=time.time())
+        except Exception as e:  # noqa: BLE001
+            code = getattr(e, "code", None)
+            self.peer_states[name] = None
+            p.update(online=False, detail="bad token" if code == 401 else "unreachable")
+
+    async def poll_peers_forever(self, period: float = 1.0) -> None:
         while True:
-            for name, p in self.peers.items():
-                try:
-                    info = await asyncio.to_thread(self._fetch_peer, name, p["url"])
-                    p.update(online=True, detail=f"{info.get('label') or info.get('host')} v{info.get('version')}")
-                except Exception as e:  # noqa: BLE001
-                    code = getattr(e, "code", None)
-                    p.update(online=False, detail="bad token" if code == 401 else "unreachable")
-            await asyncio.sleep(period)
+            t0 = time.monotonic()
+            await asyncio.gather(*(self._poll_peer(n, p) for n, p in self.peers.items()))
+            await asyncio.sleep(max(0.2, period - (time.monotonic() - t0)))
 
     async def poll_forever(self, period: float = 1.0) -> None:
         while True:
@@ -135,7 +181,29 @@ class ServiceManager:
                     print(f"[yor_hub] autostart {sid} skipped: {e.msg}", flush=True)
 
     # ---------- status ----------
+    def _ref_host(self, name: str) -> tuple[str | None, str]:
+        """'orin:zed' -> ('orin', 'zed'); 'pi:service:yor' on the pi -> (None, 'service:yor')."""
+        head, sep, rest = name.partition(":")
+        if sep and head != "service":
+            return (None, rest) if head == self.host["name"] else (head, rest)
+        return None, name
+
+    def _relevant(self, name: str) -> bool:
+        """Refs to hosts that are neither us nor one of our peers are the front hub's job."""
+        host, _ = self._ref_host(name)
+        return host is None or host in self.peers
+
     def _check_ok(self, name: str) -> bool:
+        host, name = self._ref_host(name)
+        if host is not None:
+            st = self.peer_states.get(host)
+            if not st:
+                return False
+            if name.startswith("service:"):
+                sid = name.split(":", 1)[1]
+                return any(s["id"] == sid and s["state"] in ("running", "ready") for s in st["services"])
+            c = st.get("checks", {}).get(name)
+            return bool(c and c["ok"])
         if name.startswith("service:"):
             st = self.service_state(name.split(":", 1)[1])
             return st in ("running", "ready")
@@ -143,8 +211,8 @@ class ServiceManager:
         return bool(c and c["ok"])
 
     def blocked_by(self, spec: ServiceSpec) -> list[str]:
-        out = [r for r in spec.requires if not self._check_ok(r)]
-        out += [f"{c} running" for c in spec.conflicts if self._check_ok(c)]
+        out = [r for r in spec.requires if self._relevant(r) and not self._check_ok(r)]
+        out += [f"{c} running" for c in spec.conflicts if self._relevant(c) and self._check_ok(c)]
         return out
 
     def service_state(self, window: str, spec: ServiceSpec | None = None) -> str:
@@ -173,6 +241,7 @@ class ServiceManager:
             "pid": p.pid if p and not p.dead else None,
             "started_at": self.started_at.get(window),
             "args": self.args_for(spec.id),
+            "params": self.params_json(spec),
             "requires": spec.requires,
             "blocked_by": self.blocked_by(spec),
             "ready_check": spec.ready,
@@ -202,7 +271,8 @@ class ServiceManager:
             "stats": self.stats,
             "extra_windows": [w for w in self.panes
                               if w not in self.specs and not AGENT_RE.match(w)],
-            "peers": list(self.peers.values()),
+            "peers": [{k: v for k, v in p.items() if k != "token_file"} for p in self.peers.values()],
+            "features": sorted(self.option_sources),
         }
 
     # ---------- actions ----------
@@ -215,8 +285,11 @@ class ServiceManager:
                 return sid, spec
         raise HubError(404, f"unknown service {sid}")
 
-    def _shell_cmd(self, spec: ServiceSpec, args: str, window: str) -> str:
-        cmd = spec.cmd.replace("{args}", args) if "{args}" in spec.cmd else f"{spec.cmd} {args}".strip()
+    def _shell_cmd(self, spec: ServiceSpec, args: str, window: str, params: str = "") -> str:
+        cmd = spec.cmd
+        cmd = cmd.replace("{params}", params) if "{params}" in cmd else (f"{cmd} {params}" if params else cmd)
+        cmd = cmd.replace("{args}", args) if "{args}" in cmd else f"{cmd} {args}"
+        cmd = cmd.strip()
         parts = [f"cd {shlex.quote(os.path.expanduser(spec.cwd))}"]
         if spec.env:
             if spec.env not in self.env_setups:
@@ -226,7 +299,8 @@ class ServiceManager:
         parts.append(f"exec {cmd}")
         return " && ".join(parts)
 
-    async def start(self, sid: str, args: str | None = None, force: bool = False) -> dict:
+    async def start(self, sid: str, args: str | None = None, force: bool = False,
+                    params: dict | None = None) -> dict:
         async with self._lock:
             window, spec = self._resolve(sid)
             await self.refresh()
@@ -240,10 +314,17 @@ class ServiceManager:
                 self._persist["args"][spec.id] = args
                 self._save_persist()
             use_args = args if args is not None else self.args_for(spec.id)
+            if params is not None and spec.params:
+                known = {p["name"] for p in spec.params}
+                params = {k: v for k, v in params.items() if k in known}
+                params_str = self._params_str(spec, params)   # validates before persisting
+                self._persist.setdefault("params", {})[spec.id] = params
+                self._save_persist()
+            params_str = self._params_str(spec, self.params_for(spec.id)) if spec.params else ""
             log = self.log_dir / f"{window}.log"
             if log.exists():
                 log.replace(log.with_suffix(".log.1"))
-            shell_cmd = self._shell_cmd(spec, use_args, window)
+            shell_cmd = self._shell_cmd(spec, use_args, window, params_str)
             await asyncio.to_thread(self.tmux.new_window, window, shell_cmd,
                                     os.path.expanduser(spec.cwd), str(log))
             self.started_at[window] = time.time()
@@ -310,9 +391,9 @@ class ServiceManager:
                 return True
         return False
 
-    async def restart(self, sid: str, args: str | None = None) -> dict:
+    async def restart(self, sid: str, args: str | None = None, params: dict | None = None) -> dict:
         await self.stop(sid)
-        return await self.start(sid, args=args, force=False)
+        return await self.start(sid, args=args, force=False, params=params)
 
     async def clear(self, sid: str) -> dict:
         window, spec = self._resolve(sid)

@@ -5,7 +5,28 @@ Owner: the Claude agent on the **Orin** (192.168.123.116). Works on branch
 **shared API contract**. Edit only this file and Orin-specific code/config.
 Put requests for the Pi agent under **Requests to Pi** below.
 
-## NEXT: unified hub (proposal from the Pi agent, 2026-11-20). Read this first.
+## STATUS 2026-11-20 (Pi agent): the front hub is live. To do on the Orin
+
+The Pi now serves the unified page (http://192.168.123.55:8080) and proxies the Orin
+using `~/.config/yor_hub/peers/orin.token`. The proxy, cycle editor, and cross-host refs work
+against your current hub. **To get the cycle dropdown:**
+
+1. `git pull` main into `orin`. It brings `services.py` param support (`params:` in
+   a spec, `{params}` in cmd, `features` in state) and `app.py` registering
+   `option_sources["cycles"]` from your CycleStore.
+2. I already declared the `cycle` param on `collection` in `config/orin.yaml` and set
+   `default_args: ''` (with a cycle picked, `--task "test run"` would also be passed).
+   Check that's right for start_collection.sh / collect.py. If `--task` and `--cycle`
+   are allowed together, you could restore a default task.
+3. Restart the Orin hub. It still runs by hand, so this is a good moment to do
+   `scripts/install.sh orin.yaml`.
+4. Verify from the Pi: the collection card shows a Cycle dropdown, and starting runs
+   `./start_collection.sh --cycle <name> ...` (see its terminal).
+
+Note: I added then deleted a test cycle `zz_hub_test` through the proxy while testing,
+so `.cycles_history/` has 2 extra backups from that; cycles.json is unchanged.
+
+## Unified hub proposal (2026-11-20, kept for reference)
 
 The user wants **one** web page, served by the Pi (`http://192.168.123.55:8080`),
 that shows and manages both machines. The Orin hub becomes a **node**: it keeps

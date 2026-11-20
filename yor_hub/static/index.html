@@ -9,25 +9,10 @@
 </head>
 <body>
 <header>
-  <div class="brand"><span class="dot" id="conn"></span><b>YOR Hub</b> <span id="hostlabel" class="muted"></span></div>
-  <div id="stats" class="stats"></div>
+  <div class="brand"><span class="dot" id="conn" title="connection to this hub"></span><b>YOR Hub</b></div>
 </header>
 
-<main>
-  <section>
-    <h2>Health</h2>
-    <div id="checks" class="chips"></div>
-    <div id="peers" class="chips"></div>
-  </section>
-
-  <section id="groups"></section>
-
-  <section>
-    <h2>Agents & shells <button class="small" id="newagent">+ Claude agent</button></h2>
-    <div id="agents" class="cards"></div>
-    <div id="extra" class="chips"></div>
-  </section>
-</main>
+<main id="hosts"></main>
 
 <div id="termpane" class="termpane hidden">
   <div class="termbar">
@@ -38,6 +23,36 @@
     </div>
   </div>
   <div id="termbody" class="termbody"></div>
+</div>
+
+<div id="cyclemodal" class="modal hidden">
+  <div class="dialog" role="dialog" aria-labelledby="cyc-title">
+    <div class="dhead">
+      <b>Cycles</b> <span class="muted">on <span id="cyc-host"></span> · <code id="cyc-file"></code></span>
+      <span class="spacer"></span>
+      <button class="small" id="cyc-close" title="Close (Esc)">✕</button>
+    </div>
+    <div class="dbody">
+      <div class="cyclist">
+        <div class="row"><input type="text" id="cyc-filter" placeholder="filter"><button class="small primary" id="cyc-new">+ New</button></div>
+        <div id="cyc-list" class="cycitems"></div>
+      </div>
+      <div class="cycedit">
+        <h3 id="cyc-title">Edit cycle</h3>
+        <label class="field"><span>Name</span><input type="text" id="cyc-name" spellcheck="false" placeholder="e.g. fridge_soda"></label>
+        <div class="field"><span>Subtasks, one episode each; after the last one it wraps back to the first</span></div>
+        <ol id="cyc-subs" class="subs"></ol>
+        <button class="small" id="cyc-add">+ subtask</button>
+      </div>
+    </div>
+    <div class="dfoot">
+      <span id="cyc-msg" class="cycmsg"></span>
+      <span class="spacer"></span>
+      <button class="danger" id="cyc-delete">Delete</button>
+      <button id="cyc-revert">Revert</button>
+      <button class="primary" id="cyc-save" disabled>Save</button>
+    </div>
+  </div>
 </div>
 
 <div id="toast" class="toast hidden"></div>
