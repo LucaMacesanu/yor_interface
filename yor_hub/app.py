@@ -131,5 +131,9 @@ def create_app(config_path: str) -> FastAPI:
             return
         await terminal.bridge(ws, mgr.tmux.session, window)
 
+    if cfg.get("cycles"):  # Orin: cycle editor API (yor_hub/cycles.py)
+        from . import cycles
+        cycles.mount(app, cfg["cycles"], mgr)
+
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
     return app

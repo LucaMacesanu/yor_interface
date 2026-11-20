@@ -11,10 +11,8 @@ disk_path: /mnt/t7            # T7 SSD (exFAT, automount); raw episodes go to /m
 poll_period: 1.0
 auth: true
 
-peers:
-  - name: pi
-    label: Pi
-    url: http://192.168.123.55:8080
+# No peers: the Orin is a node. The Pi front hub calls it; it never calls the Pi.
+peers: []
 
 env_setups:
   # Orin scripts run on system python3 (3.10) + ~/.local; no conda/venv needed.
@@ -25,6 +23,7 @@ checks:
   zed:           {type: path, path: /dev/v4l/by-path/platform-3610000.usb-usb-0:3.4:1.0-video-index0, label: "ZED 2i (USB 3.4)"}
   left_gripper:  {type: path, path: /dev/v4l/by-path/platform-3610000.usb-usb-0:1.4:1.0-video-index0, label: "Left gripper cam (USB 1.4)"}
   right_gripper: {type: path, path: /dev/v4l/by-path/platform-3610000.usb-usb-0:1.1:1.0-video-index0, label: "Right gripper cam (USB 1.1)"}
+  power_mode:    {type: power_mode, expect: MAXN, label: "Power mode"}
   t7:            {type: mount, path: /mnt/t7, min_free_gb: 20, label: "T7 SSD"}   # mount, not path: stat on an unplugged automount blocks
   # ports
   collect_preview: {type: tcp, port: 8080, label: "collect.py preview :8080"}
@@ -96,3 +95,10 @@ services:
     env: user-path
     cmd: claude
     stop_timeout: 5
+
+# Cycle editor API (yor_hub/cycles.py): GET/PUT/DELETE /api/cycles. Backups go to
+# cycles.json.bak and ~/yor_ws/.cycles_history/ (cycles.json has no version control).
+cycles:
+  file: ~/yor_ws/cycles.json
+  service: collection        # edits made while it runs get a "next start" note
+  keep: 50

@@ -8,10 +8,19 @@ CONFIG=${1:-pi.yaml}
 [ -f "$DIR/config/$CONFIG" ] || { echo "no config/$CONFIG"; exit 1; }
 command -v tmux >/dev/null || { echo "install tmux first"; exit 1; }
 
-if [ ! -x "$DIR/.venv/bin/python" ]; then
-    python3 -m venv "$DIR/.venv"
+if [ ! -x "$DIR/.venv/bin/pip" ]; then
+    if ! python3 -m venv "$DIR/.venv" >/dev/null 2>&1; then
+        # No python3-venv/ensurepip (the Orin): make the venv without pip, then
+        # bootstrap pip into it from the system pip. --ignore-installed because the
+        # system pip is on sys.path, so a plain install would be a no-op.
+        echo "python3 -m venv failed (no ensurepip); bootstrapping pip from the system pip"
+        rm -rf "$DIR/.venv"
+        python3 -m venv --without-pip "$DIR/.venv"
+        "$DIR/.venv/bin/python" -c "import sys; sys.path.append('/usr/lib/python3/dist-packages'); \
+from pip._internal.cli.main import main; sys.exit(main(['install', '-q', '--ignore-installed', 'pip']))"
+    fi
 fi
-"$DIR/.venv/bin/pip" install -q -r "$DIR/requirements.txt"
+"$DIR/.venv/bin/python" -m pip install -q -r "$DIR/requirements.txt"
 
 sed -e "s#@USER@#$USER#g" -e "s#@HOME@#$HOME#g" -e "s#@DIR@#$DIR#g" -e "s#@CONFIG@#$CONFIG#g" \
     "$DIR/systemd/yor-hub.service" | sudo tee /etc/systemd/system/yor-hub.service >/dev/null

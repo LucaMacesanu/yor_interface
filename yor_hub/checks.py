@@ -109,6 +109,10 @@ def check_mount(path: str, min_free_gb: float = 0, **_) -> Check:
 
 
 SYNC_CHECKS = {"can": check_can, "path": check_path, "mount": check_mount}
+
+from . import tegra  # noqa: E402  (Jetson-only stats/checks; inert elsewhere)
+if tegra.IS_TEGRA:
+    SYNC_CHECKS["power_mode"] = tegra.check_power_mode
 ASYNC_CHECKS = {"tcp": check_tcp}
 
 
@@ -159,6 +163,8 @@ def host_stats(disk_path: str) -> dict:
         except OSError:
             pass
     extra: dict[str, Any] = {}
+    if tegra.IS_TEGRA:
+        extra.update(tegra.tegra_stats(mem))
     if shutil.which("vcgencmd"):
         try:
             r = subprocess.run(["vcgencmd", "get_throttled"], capture_output=True, text=True, timeout=1)
