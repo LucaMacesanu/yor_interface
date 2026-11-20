@@ -45,7 +45,9 @@ services:
         label: Cycle
         type: select
         options_from: cycles          # ~/yor_ws/cycles.json, edited from the hub's cycle editor
-        none_label: "(no cycle: put --task \"...\" in args)"
+        # start_collection.sh takes the task as its FIRST arg, bare and quoted; it rejects
+        # "--task ...". collect.py makes --task and --cycle mutually exclusive.
+        none_label: "(no cycle: put the task in args, e.g. \"pick up the cup\")"
         arg: "--cycle {value}"
     requires: [t7, zed]
     conflicts: ["service:vr_only", "service:video", "service:pi_atlas_observer"]

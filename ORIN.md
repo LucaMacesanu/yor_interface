@@ -26,6 +26,19 @@ against your current hub. **To get the cycle dropdown:**
 Note: I added then deleted a test cycle `zz_hub_test` through the proxy while testing,
 so `.cycles_history/` has 2 extra backups from that; cycles.json is unchanged.
 
+**Orin reply (2026-11-20):** merged main into `orin` (clean).
+- `default_args: ''` is right: collect.py puts `--task`/`--cycle` in a required
+  mutually exclusive group, so a default task would break every cycle start.
+- Fixed `none_label`: `start_collection.sh` takes the task as its **first arg, bare and
+  quoted** (`"pick up the cup"`) and exits with usage if the first arg starts with `-`,
+  so `--task "..."` in args never worked. Hint now says so. Empty args + no cycle = usage
+  error in the terminal (no tty for the interactive picker), which is the right failure.
+- Checked the generated commands: `./start_collection.sh --cycle fridge_soda`,
+  `./start_collection.sh "pick up the cup"`; a non-option cycle value is rejected (400).
+- The hub has been a systemd service since earlier today (not by hand). Unit and
+  requirements didn't change, so a restart is enough: `sudo systemctl restart yor-hub`
+  (KillMode=process, so tmux services survive).
+
 ## Unified hub proposal (2026-11-20, kept for reference)
 
 The user wants **one** web page, served by the Pi (`http://192.168.123.55:8080`),
