@@ -47,19 +47,19 @@ browser ──http/ws──► Pi hub :8080 ──http/ws──► Orin hub :808
 - **Auth**: a token in `~/.config/yor_hub/token`. Open `http://host:8080/?token=…`
   once and a cookie is set. Hub-to-hub calls send `Authorization: Bearer <token>`.
 
-## Phase 1 (in progress, Pi)
+## Phase 1 (done 2026-11-20, Pi; installed as `yor-hub.service`)
 
 - [x] repo, remote, venv (`.venv`, python3.13: fastapi, uvicorn, pyyaml)
 - [x] vendored xterm.js 5.5.0 + addon-fit
-- [ ] `yor_hub/tmux.py`: session/window management, status from `list-panes`
-- [ ] `yor_hub/services.py`: start/stop/restart, requires/ready gating, autostart, per-service editable args
-- [ ] `yor_hub/checks.py`: `can` (ip -json: up, bus state, bitrate), `tcp`, `path`
-- [ ] host stats: CPU temp, load, mem, disk free for `teleop_data/`, Pi throttling
-- [ ] `yor_hub/terminal.py`: pty ↔ websocket into a tmux window
-- [ ] `yor_hub/app.py`: REST + ws, token auth, static UI
-- [ ] UI: service cards (state, start/stop, args box, open terminal), health strip, peer tile
-- [ ] `scripts/can_preflight.sh`: retries `~/YOR/extra/setup.sh` until all CAN ifaces are up and arms answer (gives up after a timeout)
-- [ ] `systemd/yor-hub.service` + `scripts/install.sh` (system unit, `User=yor`, `KillMode=process`)
+- [x] `yor_hub/tmux.py`: session/window management, status from `list-panes`
+- [x] `yor_hub/services.py`: start/stop/restart, requires/ready gating, autostart, per-service editable args
+- [x] `yor_hub/checks.py`: `can` (ip -json: up, bus state, bitrate), `tcp`, `path`
+- [x] host stats: CPU temp, load, mem, disk free for `teleop_data/`, Pi throttling
+- [x] `yor_hub/terminal.py`: pty ↔ websocket into a tmux window
+- [x] `yor_hub/app.py`: REST + ws, token auth, static UI
+- [x] UI: service cards (state, start/stop, args box, open terminal), health strip, peer tile
+- [x] `scripts/can_preflight.sh`: retries `~/YOR/extra/setup.sh` until all CAN ifaces are up and arms answer (gives up after a timeout)
+- [x] `systemd/yor-hub.service` + `scripts/install.sh` (system unit, `User=yor`, `KillMode=process`)
 
 Pi services (initial `config/pi.yaml`):
 
@@ -72,6 +72,22 @@ Pi services (initial `config/pi.yaml`):
 | `joystick` | `python robot/teleop/joystick.py` | yor_rpc | – |
 | `telestick` | `python robot/teleop/telestick.py` | yor_rpc | – |
 | `agent` | `claude` (multi-instance: agent-1, agent-2, …) | – | – |
+
+## Running it
+
+```bash
+scripts/install.sh                 # venv + systemd unit + start (Pi: config/pi.yaml)
+sudo systemctl restart yor-hub     # after code/config changes (robot processes survive)
+journalctl -u yor-hub -f           # hub log
+tmux attach -t yor                 # the processes themselves; logs also in ~/.local/state/yor_hub/logs/
+.venv/bin/python -m yor_hub --config config/pi.yaml --port 8099   # dev instance (use another tmux_session!)
+```
+
+Open `http://192.168.123.55:8080/?token=$(cat ~/.config/yor_hub/token)` once per browser.
+Services are added or changed in `config/pi.yaml` only; no code change needed.
+Extra schema keys beyond the table below: `conflicts` (blocked while these are
+ok/running, e.g. CAN setup is blocked while yor.py runs because setup.sh bounces
+the arm buses), `stop_timeout`, `description`, `env` (key into `env_setups`).
 
 ## Later phases
 
@@ -135,3 +151,6 @@ Host-specific stats go in `Stats.extra`: Pi `throttled`; Orin `gpu_util`,
 ## Log
 
 - 2026-11-20: repo created, plan written, phase 1 started.
+- 2026-11-20: phase 1 done on `pi`, merged to `main`. Installed and enabled on the Pi;
+  CAN preflight ran at service start (both arms detected). Orin tile shows
+  "unreachable" until the Orin hub runs on :8080.

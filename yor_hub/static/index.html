@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YOR Hub</title>
+<link rel="stylesheet" href="/static/vendor/xterm.css">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <div class="brand"><span class="dot" id="conn"></span><b>YOR Hub</b> <span id="hostlabel" class="muted"></span></div>
+  <div id="stats" class="stats"></div>
+</header>
+
+<main>
+  <section>
+    <h2>Health</h2>
+    <div id="checks" class="chips"></div>
+    <div id="peers" class="chips"></div>
+  </section>
+
+  <section id="groups"></section>
+
+  <section>
+    <h2>Agents & shells <button class="small" id="newagent">+ Claude agent</button></h2>
+    <div id="agents" class="cards"></div>
+    <div id="extra" class="chips"></div>
+  </section>
+</main>
+
+<div id="termpane" class="termpane hidden">
+  <div class="termbar">
+    <div id="termtabs" class="tabs"></div>
+    <div class="termactions">
+      <button class="small" id="termmax" title="Maximize">⤢</button>
+      <button class="small" id="termclose" title="Close all">✕</button>
+    </div>
+  </div>
+  <div id="termbody" class="termbody"></div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="/static/vendor/xterm.js"></script>
+<script src="/static/vendor/addon-fit.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

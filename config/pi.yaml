@@ -1,0 +1,96 @@
+host:
+  name: pi
+  label: "Pi · AI4CE-YOR"
+  port: 8080
+
+tmux_session: yor
+home_cwd: ~/YOR
+disk_path: ~/YOR/teleop_data
+poll_period: 1.0
+auth: true
+
+peers:
+  - name: orin
+    label: Orin
+    url: http://192.168.123.116:8080
+
+env_setups:
+  yor-nero: "source ~/miniforge3/etc/profile.d/conda.sh && conda activate yor-nero"
+  user-path: "export PATH=$HOME/.local/bin:$PATH"
+
+checks:
+  can0:      {type: can, iface: can0, label: "CAN base"}
+  can_left:  {type: can, iface: can_left, label: "CAN left arm"}
+  can_right: {type: can, iface: can_right, label: "CAN right arm"}
+  yor_rpc:   {type: tcp, port: 5557, label: "yor.py RPC :5557"}
+  vr_server: {type: tcp, port: 8443, label: "VR server :8443"}
+  lift:      {type: path, path: /dev/serial/by-id/usb-MicroPython_Board_in_FS_mode_e66440a2cb2f4a2b-if00, label: "Lift (Pico)"}
+  neck:      {type: path, path: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5B79017954-if00, label: "Neck (Feetech)"}
+
+services:
+  can:
+    label: CAN setup
+    group: system
+    kind: oneshot
+    cwd: ~/YOR
+    cmd: ~/YOR/yor_interface/scripts/can_preflight.sh
+    autostart: true
+    conflicts: ["service:yor"]
+    description: "Waits for all CAN adapters, runs extra/setup.sh, retries until the arms answer."
+
+  yor:
+    label: yor.py
+    group: robot
+    cwd: ~/YOR
+    env: yor-nero
+    cmd: python robot/yor.py {args}
+    requires: [can0, can_left, can_right]
+    ready: yor_rpc
+    stop_timeout: 20
+    description: "Robot driver / RPC server. Flags: --no-arms --no-neck --no-lift-home --no-gripper"
+
+  whole_body:
+    label: Whole-body VR teleop
+    group: teleop
+    cwd: ~/YOR
+    env: yor-nero
+    cmd: python robot/whole_body_teleop.py {args}
+    requires: [yor_rpc]
+    ready: vr_server
+    stop_timeout: 10
+    description: "Headset: https://192.168.123.55:8443  ·  e.g. --task \"pick up the cup\""
+
+  vr_teleop:
+    label: VR teleop (arms) + recorder
+    group: teleop
+    cwd: ~/YOR
+    env: yor-nero
+    cmd: python robot/teleop/vr_teleop.py {args}
+    requires: [yor_rpc]
+    description: "--task \"...\" required to start episodes"
+
+  joystick:
+    label: Gamepad teleop
+    group: teleop
+    cwd: ~/YOR
+    env: yor-nero
+    cmd: python robot/teleop/joystick.py {args}
+    requires: [yor_rpc]
+
+  telestick:
+    label: Keyboard teleop
+    group: teleop
+    cwd: ~/YOR
+    env: yor-nero
+    cmd: python robot/teleop/telestick.py {args}
+    requires: [yor_rpc]
+    description: "Needs keyboard input: open its terminal."
+
+  agent:
+    label: Claude agent
+    group: agents
+    kind: agent
+    cwd: ~/YOR
+    env: user-path
+    cmd: claude
+    stop_timeout: 5

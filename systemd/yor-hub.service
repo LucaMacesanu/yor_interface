@@ -1,0 +1,19 @@
+[Unit]
+Description=YOR Hub (web control for the robot)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@USER@
+Environment=HOME=@HOME@
+WorkingDirectory=@DIR@
+ExecStart=@DIR@/.venv/bin/python -m yor_hub --config @DIR@/config/@CONFIG@
+Restart=on-failure
+RestartSec=3
+# Only kill the hub itself on stop/restart: the tmux server and the robot
+# processes in it (yor.py, teleop, agents) must survive a hub restart.
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target
