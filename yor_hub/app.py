@@ -13,7 +13,7 @@ from fastapi import FastAPI, Request, WebSocket
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import terminal
+from . import front, terminal
 from .services import HubError, ServiceManager
 
 VERSION = "0.1.0"
@@ -85,7 +85,8 @@ def create_app(config_path: str) -> FastAPI:
     @app.get("/api/info")
     async def info():
         return {"host": cfg["host"]["name"], "label": cfg["host"].get("label"),
-                "version": VERSION, "peers": cfg.get("peers", [])}
+                "version": VERSION,
+                "peers": [{k: p[k] for k in ("name", "label", "url") if k in p} for p in cfg.get("peers", [])]}
 
     @app.get("/api/state")
     async def state():
@@ -100,7 +101,7 @@ def create_app(config_path: str) -> FastAPI:
     @app.post("/api/services/{sid}/start")
     async def start(sid: str, request: Request):
         b = await body(request)
-        return await mgr.start(sid, args=b.get("args"), force=bool(b.get("force")))
+        return await mgr.start(sid, args=b.get("args"), force=bool(b.get("force")), params=b.get("params"))
 
     @app.post("/api/services/{sid}/stop")
     async def stop(sid: str):
@@ -109,7 +110,7 @@ def create_app(config_path: str) -> FastAPI:
     @app.post("/api/services/{sid}/restart")
     async def restart(sid: str, request: Request):
         b = await body(request)
-        return await mgr.restart(sid, args=b.get("args"))
+        return await mgr.restart(sid, args=b.get("args"), params=b.get("params"))
 
     @app.post("/api/services/{sid}/clear")
     async def clear(sid: str):
@@ -133,7 +134,11 @@ def create_app(config_path: str) -> FastAPI:
 
     if cfg.get("cycles"):  # Orin: cycle editor API (yor_hub/cycles.py)
         from . import cycles
-        cycles.mount(app, cfg["cycles"], mgr)
+        store = cycles.mount(app, cfg["cycles"], mgr)
+        mgr.option_sources["cycles"] = lambda: list(store.get()["cycles"])  # for `options_from: cycles`
+
+    if cfg.get("peers"):  # front hub: /api/hosts, /api/state/all, proxies to peers
+        front.mount(app, mgr, authed, req_token)
 
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
     return app

@@ -89,13 +89,13 @@ Extra schema keys beyond the table below: `conflicts` (blocked while these are
 ok/running, e.g. CAN setup is blocked while yor.py runs because setup.sh bounces
 the arm buses), `stop_timeout`, `description`, `env` (key into `env_setups`).
 
-## Phase 1.5: unified front hub (next, Pi)
+## Phase 1.5: unified front hub (done 2026-11-20, Pi)
 
-- [ ] multi-host proxy: `/api/hosts`, `/api/state/all`, `/api/hosts/{host}/*`, ws term proxy
-- [ ] UI: one section per host, Orin cards and terminals through the proxy, offline banner
-- [ ] cross-host `requires` (`orin:...`)
-- [ ] service `params` (select from `options_from: cycles`), remembered per service
-- [ ] cycle editor UI (add / rename / delete cycles; add / remove / reorder / edit subtasks)
+- [x] multi-host proxy: `/api/hosts`, `/api/state/all`, `/api/hosts/{host}/*`, ws term proxy
+- [x] UI: one section per host, Orin cards and terminals through the proxy, offline banner
+- [x] cross-host `requires` (`orin:...`)
+- [x] service `params` (select from `options_from: cycles`), remembered per service
+- [x] cycle editor UI (add / rename / delete cycles; add / remove / reorder / edit subtasks)
 
 ## Later phases
 
@@ -188,3 +188,10 @@ Host-specific stats go in `Stats.extra`: Pi `throttled`; Orin `gpu_util`,
 - 2026-11-20: merged `orin` (orin.yaml, automount-safe `mount` check) into main. Orin
   hub runs on :8090. Plan changed to one front hub: the Pi serves the UI and proxies
   the Orin. Proposal and cycles request are in ORIN.md.
+- 2026-11-20: phase 1.5 done: `yor_hub/front.py` (hosts, state/all, REST + ws proxy with
+  the peer's token, peer 401 → 502 so the browser isn't logged out), params
+  (`{params}` in cmd, validated against options, remembered per service), cross-host
+  refs, `features` in state, single-page UI with a section per host + cycle editor.
+  Tested through the Pi against the live Orin: state, proxied cycles PUT / stale-409 /
+  DELETE (test cycle `zz_hub_test` added and removed; 2 extra backups in
+  ~/yor_ws/.cycles_history), and an Orin shell over the ws proxy.

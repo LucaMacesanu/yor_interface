@@ -38,8 +38,15 @@ services:
     label: Data collection (collect.py + headset video)
     group: collection
     cwd: ~/yor_ws
-    cmd: ./start_collection.sh {args}
-    default_args: '--task "test run"'
+    cmd: ./start_collection.sh {params} {args}
+    default_args: ''
+    params:
+      - name: cycle
+        label: Cycle
+        type: select
+        options_from: cycles          # ~/yor_ws/cycles.json, edited from the hub's cycle editor
+        none_label: "(no cycle: put --task \"...\" in args)"
+        arg: "--cycle {value}"
     requires: [t7, zed]
     conflicts: ["service:vr_only", "service:video", "service:pi_atlas_observer"]
     ready: collect_preview
