@@ -1,0 +1,98 @@
+host:
+  name: orin
+  label: "Orin · AGX (192.168.123.116)"
+  # 8080 is taken by collect.py's camera preview (collect.py WEB_PORT), so the
+  # Orin hub can't use the contract's 8080. See "Requests to Pi" in ORIN.md.
+  port: 8090
+
+tmux_session: yor
+home_cwd: ~/yor_ws
+disk_path: /mnt/t7            # T7 SSD (exFAT, automount); raw episodes go to /mnt/t7/yor_raw
+poll_period: 1.0
+auth: true
+
+peers:
+  - name: pi
+    label: Pi
+    url: http://192.168.123.55:8080
+
+env_setups:
+  # Orin scripts run on system python3 (3.10) + ~/.local; no conda/venv needed.
+  user-path: "export PATH=$HOME/.local/bin:$PATH"
+
+checks:
+  # cameras (by USB port path, same as innomaker_config.json / start_collection.sh)
+  zed:           {type: path, path: /dev/v4l/by-path/platform-3610000.usb-usb-0:3.4:1.0-video-index0, label: "ZED 2i (USB 3.4)"}
+  left_gripper:  {type: path, path: /dev/v4l/by-path/platform-3610000.usb-usb-0:1.4:1.0-video-index0, label: "Left gripper cam (USB 1.4)"}
+  right_gripper: {type: path, path: /dev/v4l/by-path/platform-3610000.usb-usb-0:1.1:1.0-video-index0, label: "Right gripper cam (USB 1.1)"}
+  t7:            {type: mount, path: /mnt/t7, min_free_gb: 20, label: "T7 SSD"}   # mount, not path: stat on an unplugged automount blocks
+  # ports
+  collect_preview: {type: tcp, port: 8080, label: "collect.py preview :8080"}
+  cycle_announce:  {type: tcp, port: 5559, label: "Cycle announce :5559"}
+  zed_view:        {type: tcp, port: 5551, label: "ZED stereo for headset :5551"}
+  video_server:    {type: tcp, port: 8444, label: "Headset video server :8444"}
+  pi_atlas_obs:    {type: tcp, port: 5580, label: "pi-atlas cameras :5580"}
+
+services:
+  # ---- data collection ----
+  collection:
+    label: Data collection (collect.py + headset video)
+    group: collection
+    cwd: ~/yor_ws
+    cmd: ./start_collection.sh {args}
+    default_args: '--task "test run"'
+    requires: [t7, zed]
+    conflicts: ["service:vr_only", "service:video", "service:pi_atlas_observer"]
+    ready: collect_preview
+    # Ctrl-C makes collect.py save the current episode (up to ~3 s for a
+    # 5-min episode), then the video server stops (up to 5 s).
+    stop_timeout: 30
+    description: >-
+      Args: --task "..." or --cycle NAME (cycles.json), plus any collect.py flags
+      (--no-vr, --cameras ..., --output-dir DATASET to resume). Start BEFORE
+      pressing start on the Pi. Preview: http://192.168.123.116:8080
+
+  # ---- teleop without recording ----
+  vr_only:
+    label: ZED → headset (no recording)
+    group: teleop
+    cwd: ~/yor_ws
+    cmd: python3 zed_rgbd.py --vr-only {args}
+    requires: [zed]
+    conflicts: ["service:collection", "service:pi_atlas_observer"]
+    ready: zed_view
+    stop_timeout: 10
+    description: "Owns the ZED and publishes zed/view :5551. Start 'Headset video server' too."
+
+  video:
+    label: Headset video server
+    group: teleop
+    cwd: ~/yor_ws/vr-teleop
+    cmd: ./start_video.sh {args}
+    requires: [zed_view]
+    conflicts: ["service:collection"]   # start_collection.sh runs its own copy
+    ready: video_server
+    stop_timeout: 10
+    description: "https://192.168.123.116:8444 · needs vr_only (or collection) publishing :5551"
+
+  # ---- policy deployment ----
+  # Inference always runs on an external machine; the Orin only publishes observations.
+  pi_atlas_observer:
+    label: pi-atlas camera observer
+    group: deploy
+    cwd: ~/yor_ws
+    cmd: python3 pi_atlas_observer.py {args}
+    requires: [zed]
+    conflicts: ["service:collection", "service:vr_only"]
+    ready: pi_atlas_obs
+    stop_timeout: 10
+    description: "ZED + both grippers → ZMQ PUB *:5580 (640x360 JPEG, 30 Hz). --map adds depth+pose on :5583."
+
+  agent:
+    label: Claude agent
+    group: agents
+    kind: agent
+    cwd: ~/yor_ws
+    env: user-path
+    cmd: claude
+    stop_timeout: 5

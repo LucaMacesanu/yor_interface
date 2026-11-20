@@ -66,7 +66,49 @@ def check_path(path: str, **_) -> Check:
     return _res(os.path.exists(p), "present" if os.path.exists(p) else f"missing: {p}")
 
 
-SYNC_CHECKS = {"can": check_can, "path": check_path}
+def _real_mount(path: str) -> tuple[str, str] | None:
+    """(mountpoint, fstype) of the real filesystem holding `path`, read from
+    /proc/self/mounts without touching `path`. None when the nearest mountpoint is
+    only an autofs trigger: stat'ing such a path blocks (D state) until systemd's
+    automount gives up, which is ~90 s when the drive is unplugged."""
+    p = os.path.abspath(os.path.expanduser(path))  # not realpath: it stats the path
+    best: dict[str, list[str]] = {}
+    try:
+        with open("/proc/self/mounts") as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) >= 3:
+                    best.setdefault(parts[1], []).append(parts[2])
+    except OSError:
+        return None
+    mp = p
+    while True:
+        if mp in best:
+            real = [t for t in best[mp] if t != "autofs"]
+            return (mp, real[-1]) if real else None
+        if mp == "/":
+            return None
+        mp = os.path.dirname(mp)
+
+
+def check_mount(path: str, min_free_gb: float = 0, **_) -> Check:
+    """Is `path` on a real (non-autofs) filesystem, and how much is free. Never
+    triggers an automount, so it is safe to poll for unplugged drives."""
+    m = _real_mount(path)
+    if not m:
+        return _res(False, f"not mounted: {path}")
+    mp, fstype = m
+    try:
+        free = shutil.disk_usage(mp).free / 1e9
+    except OSError as e:
+        return _res(False, f"{fstype} at {mp}: {e}")
+    detail = f"{fstype} at {mp}, {free:.0f} GB free"
+    if free < min_free_gb:
+        return _res(True, detail + f" (< {min_free_gb:g} GB)", level="warn", free_gb=round(free, 1))
+    return _res(True, detail, free_gb=round(free, 1))
+
+
+SYNC_CHECKS = {"can": check_can, "path": check_path, "mount": check_mount}
 ASYNC_CHECKS = {"tcp": check_tcp}
 
 
@@ -109,10 +151,13 @@ def host_stats(disk_path: str) -> dict:
         k, _, v = line.partition(":")
         mem[k] = int(v.split()[0]) if v.split() else 0
     mem_used = 100.0 * (1 - mem.get("MemAvailable", 0) / mem["MemTotal"]) if mem.get("MemTotal") else None
-    try:
-        disk_free = shutil.disk_usage(os.path.expanduser(disk_path)).free / 1e9
-    except OSError:
-        disk_free = None
+    disk_free = None
+    m = _real_mount(disk_path)  # never stat an unmounted automount point (it blocks)
+    if m:
+        try:
+            disk_free = shutil.disk_usage(os.path.expanduser(disk_path)).free / 1e9
+        except OSError:
+            pass
     extra: dict[str, Any] = {}
     if shutil.which("vcgencmd"):
         try:
